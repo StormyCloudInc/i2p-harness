@@ -1,7 +1,6 @@
 package discover
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +41,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 3)
 		require.Equal(t, int64(8192), result[0].ContextWindow)
@@ -67,7 +66,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, int64(8192), result[0].ContextWindow,
 			"a base URL with /v1 must not be asked for /v1/v1/models")
@@ -92,7 +91,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, int64(131072), result[0].ContextWindow)
 	})
@@ -116,7 +115,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1", ContextWindow: 65536}}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, int64(65536), result[0].ContextWindow)
 	})
@@ -132,7 +131,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		require.Equal(t, int64(0), result[0].ContextWindow)
@@ -150,7 +149,7 @@ func TestLlamacppEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &llamacppEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		require.Equal(t, int64(0), result[0].ContextWindow)

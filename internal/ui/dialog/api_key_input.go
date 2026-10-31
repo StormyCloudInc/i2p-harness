@@ -75,6 +75,7 @@ func NewAPIKeyInput(
 	m.input = textinput.New()
 	m.input.SetVirtualCursor(false)
 	m.input.Placeholder = "Enter your API key..."
+	m.input.EchoMode = textinput.EchoPassword
 	m.input.SetStyles(com.Styles.TextInput)
 	m.input.Focus()
 
@@ -284,14 +285,17 @@ func (m *APIKeyInput) ShortHelp() []key.Binding {
 func (m *APIKeyInput) verifyAPIKey() tea.Msg {
 	start := time.Now()
 
-	providerConfig := config.ProviderConfig{
-		ID:      string(m.provider.ID),
-		Name:    m.provider.Name,
-		APIKey:  m.input.Value(),
-		Type:    m.provider.Type,
-		BaseURL: m.provider.APIEndpoint,
+	providerConfig, ok := m.com.Config().Providers.Get(string(m.provider.ID))
+	var err error
+	if !ok {
+		err = fmt.Errorf("provider is not configured")
+	} else if m.input.Value() != "" {
+		// Custom provider names may match former built-in providers; use the
+		// generic OpenAI-compatible validation path for every custom endpoint.
+		providerConfig.ID = "custom"
+		providerConfig.APIKey = common.LiteralProviderValue(m.input.Value())
+		err = providerConfig.TestConnection(m.com.Workspace.Resolver())
 	}
-	err := providerConfig.TestConnection(m.com.Workspace.Resolver())
 
 	// intentionally wait for at least 750ms to make sure the user sees the spinner
 	elapsed := time.Since(start)
@@ -307,7 +311,7 @@ func (m *APIKeyInput) verifyAPIKey() tea.Msg {
 }
 
 func (m *APIKeyInput) saveKeyAndContinue() Action {
-	err := m.com.Workspace.SetProviderAPIKey(config.ScopeGlobal, string(m.provider.ID), m.input.Value())
+	err := m.com.Workspace.SetProviderAPIKey(config.ScopeGlobal, string(m.provider.ID), common.LiteralProviderValue(m.input.Value()))
 	if err != nil {
 		return ActionCmd{util.ReportError(fmt.Errorf("failed to save API key: %w", err))}
 	}

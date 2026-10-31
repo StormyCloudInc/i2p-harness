@@ -1,7 +1,6 @@
 package discover
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +47,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 3)
 		require.Equal(t, int64(32768), result[0].ContextWindow)
@@ -81,7 +80,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1", Name: "m1"}}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, int64(8192), result[0].ContextWindow)
 	})
@@ -108,7 +107,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, int64(65536), result[0].ContextWindow)
 		require.Equal(t, "My Custom Name", result[0].Name)
@@ -125,7 +124,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		require.Equal(t, int64(0), result[0].ContextWindow)
@@ -147,7 +146,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1", Name: "User Name"}}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Equal(t, "User Name", result[0].Name)
 	})
@@ -168,7 +167,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1", Name: "m1", Capabilities: catwalk.Capabilities{Vision: true}}}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.True(t, result[0].Capabilities.Vision)
 	})
@@ -209,7 +208,7 @@ func TestLmstudioEnricher(t *testing.T) {
 		}
 
 		e := &lmstudioEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.True(t, result[0].Capabilities.Vision, "vision model should have Capabilities.Vision=true")
 		require.False(t, result[1].Capabilities.Vision, "text-only model should have Capabilities.Vision=false")

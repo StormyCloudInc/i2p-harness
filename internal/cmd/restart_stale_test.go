@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -44,10 +47,33 @@ func (l *controlLog) all() []string {
 	return append([]string(nil), l.commands...)
 }
 
+// newBackendTestServer serves a local fixture through the same Unix socket
+// path used by the backend, without enabling direct TCP requests.
+func newBackendTestServer(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain sockets are not available for this fixture")
+	}
+	f, err := os.CreateTemp("/tmp", "crush-test-*.sock")
+	require.NoError(t, err)
+	path := f.Name()
+	require.NoError(t, f.Close())
+	require.NoError(t, os.Remove(path))
+	t.Cleanup(func() { _ = os.Remove(path) })
+	listener, err := net.Listen("unix", path)
+	require.NoError(t, err)
+	srv := httptest.NewUnstartedServer(handler)
+	require.NoError(t, srv.Listener.Close())
+	srv.Listener = listener
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return path
+}
+
 func newControlServer(t *testing.T, opts controlServerOpts) (*url.URL, *controlLog) {
 	t.Helper()
 	log := &controlLog{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	path := newBackendTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/version":
 			require.NoError(t, json.NewEncoder(w).Encode(opts.vi))
@@ -72,10 +98,7 @@ func newControlServer(t *testing.T, opts controlServerOpts) (*url.URL, *controlL
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
-	t.Cleanup(srv.Close)
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-	return &url.URL{Scheme: "tcp", Host: u.Host}, log
+	return &url.URL{Scheme: "unix", Host: path}, log
 }
 
 // staleVersion never matches this build, so restartIfStale always
@@ -196,7 +219,7 @@ func TestCreateWorkspaceOnLiveServer_RetriesPastExitingServer(t *testing.T) {
 	var mu sync.Mutex
 	replaced := 0
 	creates := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	path := newBackendTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/workspaces", r.URL.Path)
 		mu.Lock()
 		creates++
@@ -210,11 +233,7 @@ func TestCreateWorkspaceOnLiveServer_RetriesPastExitingServer(t *testing.T) {
 		}
 		require.NoError(t, json.NewEncoder(w).Encode(proto.Workspace{ID: "ws-new"}))
 	}))
-	t.Cleanup(srv.Close)
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-
-	c, err := client.NewClient(t.TempDir(), "tcp", u.Host)
+	c, err := client.NewClient(t.TempDir(), "unix", path)
 	require.NoError(t, err)
 
 	ws, err := createWorkspaceOnLiveServer(t.Context(), c, proto.Workspace{Path: t.TempDir()},
@@ -239,14 +258,10 @@ func TestCreateWorkspaceOnLiveServer_RetriesPastExitingServer(t *testing.T) {
 func TestCreateWorkspaceOnLiveServer_GivesUpOnOtherFailures(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	path := newBackendTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nope", http.StatusInternalServerError)
 	}))
-	t.Cleanup(srv.Close)
-	u, err := url.Parse(srv.URL)
-	require.NoError(t, err)
-
-	c, err := client.NewClient(t.TempDir(), "tcp", u.Host)
+	c, err := client.NewClient(t.TempDir(), "unix", path)
 	require.NoError(t, err)
 
 	_, err = createWorkspaceOnLiveServer(t.Context(), c, proto.Workspace{Path: t.TempDir()},

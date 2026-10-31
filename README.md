@@ -13,7 +13,7 @@
 
 ## Features
 
-- **Multi-Model:** choose from a wide range of LLMs or add your own via OpenAI- or Anthropic-compatible APIs
+- **Custom models:** connect an OpenAI-compatible HTTP endpoint and choose its models
 - **Flexible:** switch LLMs mid-session while preserving context
 - **Session-Based:** maintain multiple work sessions and contexts per project
 - **LSP-Enhanced:** Crush uses LSPs for additional context, just like you do
@@ -92,16 +92,16 @@ You can use these modules directly in your flake by importing them from NUR. Sin
             enable = true;
             settings = {
               providers = {
-                openai = {
-                  id = "openai";
-                  name = "OpenAI";
-                  base_url = "https://api.openai.com/v1";
-                  type = "openai";
+                custom = {
+                  id = "custom";
+                  name = "Custom";
+                  base_url = "http://example.b32.i2p/v1";
+                  type = "completions";
                   api_key = "sk-fake123456789abcdef...";
                   models = [
                     {
-                      id = "gpt-5.6-sol";
-                      name = "GPT-5.6 Sol";
+                      id = "my-model";
+                      name = "My model";
                     }
                   ];
                 };
@@ -182,77 +182,38 @@ go install -tags sqlite3_dotlk github.com/charmbracelet/crush@latest
 
 ## Getting Started
 
-The quickest way to get started is to choose a [Hyper][hyper] model from model
-picker. Follow the steps to authenticate and you'll be good to go.
+Run `crush` and add an OpenAI-compatible provider in the model picker. Enter a
+provider ID, the upstream I2P API's base URL (typically ending in `/v1`), and an
+optional API key. If the upstream does not list models, enter a model ID too.
+Press <kbd>ctrl+l</kbd> to open the model picker, then <kbd>ctrl+a</kbd> to
+add another provider.
+Providers added in the UI are saved in Crush's global data configuration
+(`~/.local/share/crush/crush.json` by default on macOS and Linux); API keys are
+stored there as text.
 
-[Hyper], from Charm, is the official Crush provider. It’s subscription-based
-and optimized for Crush. It’s privacy focused, with zero data retention (ZDR)
-and is designed to comply with GDPR. [More on Hyper][hyper].
+You can also configure providers in `crushrc` in your project directory (or
+`~/.config/crush/crushrc` for all projects):
 
-<p><a href="https://hyper.charm.land"><img width="340" height="200" alt="Charm Hyper" src="https://github.com/user-attachments/assets/50875289-7992-454d-9f14-9f790413fb5e" /></a></p>
+```bash
+provider add custom --type completions --base-url "http://example.b32.i2p/v1"
+```
 
-## API Keys
+If the upstream requires a key, add `--api-key "$CUSTOM_API_KEY"` and set that
+environment variable before starting Crush. Omit the flag for an upstream that
+does not require authentication. Crush discovers models from the upstream when
+none are explicitly configured. Alternatively, register a model manually:
 
-You can also use Crush with many other providers such as Anthopic, OpenAI,
-Gemini, OpenRouter and so on. Press <kbd>ctrl+l</kbd> to open the model picker,
-choose the provider of your choice, and paste your API key.
+```bash
+model add custom/my-model --name "My model" \
+  --context-window 128000 --default-max-tokens 8192
+```
 
-That said, you can also set environment variables for preferred providers:
-
-| Environment Variable        | Provider                                           |
-| --------------------------- | -------------------------------------------------- |
-| `HYPER_API_KEY`             | [Charm Hyper][hyper]                               |
-| `ANTHROPIC_API_KEY`         | Anthropic                                          |
-| `OPENAI_API_KEY`            | OpenAI                                             |
-| `VERCEL_API_KEY`            | Vercel AI Gateway                                  |
-| `GEMINI_API_KEY`            | Google Gemini                                      |
-| `ZAI_API_KEY`               | Z.ai                                               |
-| `MINIMAX_API_KEY`           | MiniMax                                            |
-| `SYNTHETIC_API_KEY`         | Synthetic                                          |
-| `HF_TOKEN`                  | Hugging Face Inference                             |
-| `CEREBRAS_API_KEY`          | Cerebras                                           |
-| `OPENROUTER_API_KEY`        | OpenRouter                                         |
-| `IONET_API_KEY`             | io.net                                             |
-| `ALIBABA_SINGAPORE_API_KEY` | Alibaba (Singapore)                                |
-| `ALIBABA_US_API_KEY`        | Alibaba (United States)                            |
-| `GROQ_API_KEY`              | Groq                                               |
-| `AVIAN_API_KEY`             | Avian                                              |
-| `OPENCODE_API_KEY`          | OpenCode Zen & Go                                  |
-| `VERTEXAI_PROJECT`          | Google Cloud VertexAI (Gemini)                     |
-| `VERTEXAI_LOCATION`         | Google Cloud VertexAI (Gemini)                     |
-| `AWS_ACCESS_KEY_ID`         | Amazon Bedrock (Claude)                            |
-| `AWS_SECRET_ACCESS_KEY`     | Amazon Bedrock (Claude)                            |
-| `AWS_REGION`                | Amazon Bedrock (Claude)                            |
-| `AWS_PROFILE`               | Amazon Bedrock (Custom Profile)                    |
-| `AWS_BEARER_TOKEN_BEDROCK`  | Amazon Bedrock                                     |
-| `AZURE_OPENAI_API_ENDPOINT` | Azure OpenAI models                                |
-| `AZURE_OPENAI_API_KEY`      | Azure OpenAI models (optional when using Entra ID) |
-| `AZURE_OPENAI_API_VERSION`  | Azure OpenAI models                                |
-| `MOONSHOT_API_KEY`          | Moonshot                                           |
-| `XAI_API_KEY`               | xAI                                                |
-
-[hyper]: https://hyper.charm.land
-
-Also note that Crush can support nearly any provider, including
-[Local Models](#local-models). For more info see
-[Custom Providers](#custom-providers) below.
-
-### By the Way
-
-Is there a provider you’d like to see in Crush? Is there an existing model that needs an update?
-
-Crush’s default model listing is managed in [Catwalk](https://github.com/charmbracelet/catwalk), a community-supported, open source repository of Crush-compatible models, and you’re welcome to contribute.
-
-<a href="https://github.com/charmbracelet/catwalk"><img width="174" height="174" alt="Catwalk Badge" src="https://github.com/user-attachments/assets/95b49515-fe82-4409-b10d-5beb0873787d" /></a>
+Choose a configured or discovered model in the model picker. See
+[Custom Providers](#custom-providers) for more details.
 
 ## Configuration
 
-> [!TIP]
-> Crush ships with a builtin skill for configuring itself. Most of the time
-> you can just tell what you want it to configure and it will get the job done.
-
-Crush runs great with no configuration. That said, if you do need or want to
-customize Crush, you can, with a `crushrc`.
+You can configure providers and other settings with a `crushrc`.
 
 A `crushrc` is just Bash with some Crush-specific builtins. It’s a lot like
 a `.bashrc`, just for your Crush. Because Crush has a native, built-in Bash
@@ -262,11 +223,11 @@ Windows.
 For example:
 
 ```bash
-# Add Ollama.
-provider add ollama --type ollama --base-url "http://localhost:11434/v1"
+# Add an OpenAI-compatible endpoint.
+provider add custom --type completions --base-url "http://example.b32.i2p/v1"
 
-# Register a model on Ollama.
-model add ollama/llama3.3 --name "Llama 3.3" --context-window 128000
+# Register a model on the endpoint.
+model add custom/llama3.3 --name "Llama 3.3" --context-window 128000
 
 # Auto-approve some tools.
 permissions allow view edit
@@ -330,15 +291,15 @@ files from the internet into your config.
 ### Environment Variables
 
 The top-level `env` field sets environment variables at startup, before
-providers are configured. This is useful for variables that affect provider
-authentication (e.g. the AWS SDK credential chain) without wrapping the
-`crush` command in a shell script or exporting them in your shell profile:
+the provider is configured. This can set environment variables without
+wrapping the `crush` command in a shell script or exporting them in your shell
+profile:
 
 ```json
 {
   "$schema": "https://charm.land/crush.json",
   "env": {
-    "AWS_PROFILE": "my-sso-profile"
+    "NO_COLOR": "1"
   }
 }
 ```
@@ -744,178 +705,36 @@ option attribution-generated-with true
 
 ### Custom Providers
 
-Crush supports custom provider configurations for both OpenAI-compatible and
-Anthropic-compatible APIs.
-
-> [!NOTE]
-> The provider type describes the API format the provider speaks. Make sure
-> to choose the right one to ensure the best experience!
->
-> - `responses` should be used when proxying or routing requests through OpenAI.
-> - `completions` should be used when using non-OpenAI providers that have OpenAI-compatible APIs.
-> - `messages` should be used for Anthropic-compatible APIs.
->
-> Legacy values (`openai`, `openai-compat`, `anthropic`) are still accepted and
-> migrated automatically.
-
-#### OpenAI-Compatible APIs
-
-Here’s an example configuration for Deepseek, which uses an OpenAI-compatible
-API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
+Crush accepts multiple named providers with the `completions` type. Each
+upstream must implement the OpenAI-compatible chat completions API.
+Its base URL is the API root (usually ending in `/v1`); Crush appends the
+appropriate API paths. An API key is optional:
 
 ```bash
-provider add deepseek --type completions \
-  --base-url "https://api.deepseek.com/v1" \
-  --api-key "$DEEPSEEK_API_KEY"
+provider add custom --type completions \
+  --base-url "http://example.b32.i2p/v1" \
+  --api-key "$CUSTOM_API_KEY"
 
-model add deepseek/deepseek-chat \
-  --name "Deepseek V3" \
-  --context-window 64000 \
-  --default-max-tokens 5000 \
-  --price-input 0.27 \
-  --price-output 1.1 \
-  --price-cache-create 1.1 \
-  --price-cache-hit 0.07
+model add custom/my-model --name "My model" \
+  --context-window 128000 --default-max-tokens 8192
+
+provider add second --type completions --base-url "http://another.b32.i2p/v1"
 ```
 
-#### Anthropic-Compatible APIs
+Leave out `--api-key` when the upstream does not require one. If no models
+are listed, Crush attempts to discover them from the upstream. Set
+`--discover-models true` to merge discovered models with manually configured
+models; explicit model fields take precedence.
 
-Custom Anthropic-compatible providers follow this format:
+I2P endpoints such as `http://example.b32.i2p/v1` are routed through Onramp
+automatically. A running I2P router with its SAM bridge at `127.0.0.1:7656`
+is required. When discovering models in the provider setup dialog, Crush
+shows the dial and reports a successful connection.
 
-```bash
-provider add custom-anthropic \
-  --type messages \
-  --base-url "https://api.anthropic.com/v1" \
-  --api-key "$ANTHROPIC_API_KEY" \
-  --extra-header anthropic-version 2023-06-01
-
-model add custom-anthropic/claude-sonnet-4-20250514 \
-  --name "Claude Sonnet 4" \
-  --context-window 200000 \
-  --default-max-tokens 50000 \
-  --thinking toggleable \
-  --supports-images true \
-  --price-input 3 \
-  --price-output 15 \
-  --price-cache-create 3.75 \
-  --price-cache-hit 0.3
-```
-
-### Amazon Bedrock
-
-Crush currently supports running Anthropic models through Bedrock, with caching disabled.
-
-A Bedrock provider appears once Crush can find AWS credentials. You can
-authenticate in one of two ways:
-
-**API key.** Set `AWS_BEARER_TOKEN_BEDROCK` to a Bedrock API key. This is the
-simplest option and never expires mid-session.
-
-**AWS credential chain (SSO, profiles, access keys).** Configure AWS the usual
-way with `aws configure` or `aws configure sso`. Crush picks up whatever the
-AWS SDK credential chain resolves, including `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`
-/ `AWS_SECRET_ACCESS_KEY`, or an SSO session. To select a specific profile,
-set `AWS_PROFILE` in your shell (`AWS_PROFILE=myprofile crush`) or in the
-top-level [`env`](#environment-variables) config.
-
-If you authenticate via AWS SSO, your session expires periodically. Set
-`aws_auth_refresh` to a command that refreshes it. When Bedrock returns a
-credential error, Crush runs the command, then retries the request in place
-(no duplicate messages, no manual restart):
-
-```json
-{
-  "$schema": "https://charm.land/crush.json",
-  "env": {
-    "AWS_PROFILE": "my-sso-profile"
-  },
-  "providers": {
-    "bedrock": {
-      "aws_auth_refresh": "aws sso login --profile my-sso-profile"
-    },
-    "bedrock-europe": {
-      "aws_auth_refresh": "aws sso login --profile my-eu-sso-profile"
-    }
-  }
-}
-```
-
-- `aws_auth_refresh` — shell command run when AWS credentials expire (e.g. `aws sso login`)
-
-### Vertex AI Platform
-
-Vertex AI will appear in the list of available providers when `VERTEXAI_PROJECT` and `VERTEXAI_LOCATION` are set. You will also need to be authenticated:
-
-```bash
-$ gcloud auth application-default login
-```
-
-To add specific models to the configuration, configure as such:
-
-```bash
-# crushrc — authentication still comes from gcloud and the VERTEXAI_* env vars.
-provider add vertexai
-
-model add vertexai/claude-sonnet-4@20250514 \
-  --name "VertexAI Sonnet 4" \
-  --context-window 200000 \
-  --default-max-tokens 50000 \
-  --thinking toggleable \
-  --supports-images true \
-  --price-input 3 \
-  --price-output 15 \
-  --price-cache-create 3.75 \
-  --price-cache-hit 0.3
-```
-
-### Local Models
-
-Crush can auto-discovers models from local providers. Add a custom provider
-with `type` set to `llamacpp`, `omlx`, `lmstudio`, `litellm`, or `ollama`
-and leave out the models list. Crush will populate the model list
-automatically.
-
-```bash
-# Piece of cake.
-provider add ollama \
-  --name Ollama \
-  --type ollama \
-  --base-url "http://localhost:11434/v1/"
-```
-
-For llama.cpp (`llama-server`), point at the server's base URL:
-
-```bash
-provider add llamacpp \
-  --name "llama.cpp" \
-  --type llamacpp \
-  --base-url "http://localhost:2222"
-```
-
-#### Manual Model Configuration
-
-You can still list models explicitly. User-defined models always take
-precedence over discovered ones, and any fields you set won't be overwritten
-by auto-discovery. Auto discovery will run if the model list is empty for any
-`openai-compat` provider or if you pass `"discover_models": true` it will merge
-the found models with your hand configured ones.
-
-```bash
-# crushrc
-provider add ollama \
-  --name Ollama \
-  --type ollama \
-  --base-url "http://localhost:11434/v1/" \
-  --discover-models true
-
-model add ollama/qwen3:30b \
-  --name "Qwen 3 30B" \
-  --context-window 256000 \
-  --default-max-tokens 20000
-```
-
-The `--discover-models true` flag merges discovered models with the one above;
-your explicit model fields win on conflicts.
+Crush's HTTP clients reject destinations outside `.i2p` and ignore HTTP proxy
+settings. This blocks ordinary web search, updates, and clearnet providers.
+Commands, hooks, language servers, and other subprocesses are not confined by
+this setting; use an operating-system network sandbox to restrict them too.
 
 ## Logging
 
@@ -942,60 +761,6 @@ Want more logging? Run `crush` with the `--debug` flag, or enable it in your
 # crushrc
 option debug true
 option debug-lsp true
-```
-
-## Provider Auto-Updates
-
-By default, Crush automatically checks for the latest and greatest list of
-providers and models from [Catwalk](https://github.com/charmbracelet/catwalk),
-the open source Crush provider database. This means that when new providers and
-models are available, or when model metadata changes, Crush automatically
-updates your local configuration.
-
-### Custom provider catalog
-
-You can also override [Catwalk](https://github.com/charmbracelet/catwalk) default URL (for testing, using a fork).
-
-You can do so by setting the `CATWALK_URL` environment variable. (e.g. `export CATWALK_URL=http://localhost:8000`)
-
-### Disabling automatic provider updates
-
-For those with restricted internet access, or those who prefer to work in
-air-gapped environments, this might not be what you want, and this feature can
-be disabled.
-
-To disable automatic provider updates in your `crushrc`:
-
-```bash
-option provider-auto-update false
-```
-
-Or set the `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE` environment variable:
-
-```bash
-export CRUSH_DISABLE_PROVIDER_AUTO_UPDATE=1
-```
-
-### Manually updating providers
-
-Manually updating providers is possible with the `crush update-providers`
-command:
-
-```bash
-# Update providers remotely from Catwalk.
-crush update-providers
-
-# Update providers from a custom Catwalk base URL.
-crush update-providers https://example.com/
-
-# Update providers from a local file.
-crush update-providers /path/to/local-providers.json
-
-# Reset providers to the embedded version, embedded at crush at build time.
-crush update-providers embedded
-
-# For more info:
-crush update-providers --help
 ```
 
 ## Metrics

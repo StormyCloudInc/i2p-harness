@@ -30,6 +30,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
+	"github.com/charmbracelet/crush/internal/i2p"
 	"github.com/charmbracelet/crush/internal/lock"
 	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -70,11 +71,8 @@ func init() {
 		runCmd,
 		dirsCmd,
 		projectsCmd,
-		updateProvidersCmd,
 		logsCmd,
-		logoutCmd,
 		schemaCmd,
-		loginCmd,
 		statsCmd,
 		sessionCmd,
 	)
@@ -365,10 +363,6 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 		return nil, nil, err
 	}
 
-	if shouldEnableMetrics(cfg) {
-		event.Init()
-	}
-
 	ws := workspace.NewAppWorkspace(appInstance, store)
 	cleanup := func() { appInstance.Shutdown() }
 	return ws, cleanup, nil
@@ -467,10 +461,6 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	})
 	if err != nil {
 		return nil, nil, nil, err
-	}
-
-	if shouldEnableMetrics(ws.Config) {
-		event.Init()
 	}
 
 	if ws.Config != nil {
@@ -749,7 +739,7 @@ func readinessHTTPClient(hostURL *url.URL) (*http.Client, string, error) {
 		return nil, "", err
 	}
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := i2p.NewTransport()
 	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return c.Dial(ctx, network, addr)
 	}
@@ -942,19 +932,6 @@ func startDetachedServer(cmd *cobra.Command, hostURL *url.URL) error {
 	}
 
 	return nil
-}
-
-func shouldEnableMetrics(cfg *config.Config) bool {
-	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_DISABLE_METRICS")); v {
-		return false
-	}
-	if v, _ := strconv.ParseBool(os.Getenv("DO_NOT_TRACK")); v {
-		return false
-	}
-	if cfg.Options.DisableMetrics {
-		return false
-	}
-	return true
 }
 
 func MaybePrependStdin(prompt string) (string, error) {

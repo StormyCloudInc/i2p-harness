@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,6 +24,9 @@ func captureClient(t *testing.T, srv *httptest.Server) *Client {
 	require.NoError(t, err)
 	c, err := NewClient(t.TempDir(), "tcp", u.Host)
 	require.NoError(t, err)
+	// These request serialization tests use a local fixture, not the
+	// production network policy.
+	c.h.Transport.(*http.Transport).DialContext = (&net.Dialer{}).DialContext
 	return c
 }
 

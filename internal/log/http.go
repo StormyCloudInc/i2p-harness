@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// NewHTTPClient creates an HTTP client with debug logging enabled when debug mode is on.
 func NewHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &HTTPRoundTripLogger{

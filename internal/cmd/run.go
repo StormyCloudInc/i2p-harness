@@ -111,7 +111,7 @@ crush run --continue "Follow up on your last response"
 			event.AppInitialized()
 
 			if !ws.Config.IsConfigured() {
-				return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
+				return fmt.Errorf("no model configured - add a provider in the model picker or configure one in crushrc (see README)")
 			}
 
 			clientWs := workspace.NewClientWorkspace(c, *ws)
@@ -143,7 +143,7 @@ crush run --continue "Follow up on your last response"
 		event.AppInitialized()
 
 		if !ws.Config().IsConfigured() {
-			return fmt.Errorf("no providers configured - please run 'crush' to set up a provider interactively")
+			return fmt.Errorf("no model configured - add a provider in the model picker or configure one in crushrc (see README)")
 		}
 
 		if verbose {

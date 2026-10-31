@@ -18,19 +18,10 @@ func TestServingProvider(t *testing.T) {
 		return catwalk.Model{ID: "some-model", Type: modelType}
 	}
 
-	t.Run("bespoke SDKs are selected by provider ID", func(t *testing.T) {
+	t.Run("completions ignore former built-in provider IDs", func(t *testing.T) {
 		t.Parallel()
-		for providerID, expected := range map[string]string{
-			string(catwalk.InferenceProviderBedrock):       "bedrock",
-			string(catwalk.InferenceProviderBedrockEurope): "bedrock",
-			string(catwalk.InferenceProviderAzure):         "azure",
-			string(catwalk.InferenceProviderGemini):        "google",
-			string(catwalk.InferenceProviderVertexAI):      "google",
-			string(catwalk.InferenceProviderOpenRouter):    "openrouter",
-			string(catwalk.InferenceProviderVercel):        "vercel",
-			"hyper":                                        "hyper",
-		} {
-			require.Equal(t, expected, servingProvider(providerCfg(providerID, catwalk.TypeCompletions), model("")), providerID)
+		for _, providerID := range []string{"bedrock", "azure", "gemini", "openrouter", "vercel", "hyper", "copilot"} {
+			require.Equal(t, "openai-compat", servingProvider(providerCfg(providerID, catwalk.TypeCompletions), model("")), providerID)
 		}
 	})
 
@@ -59,32 +50,68 @@ func TestServingProvider(t *testing.T) {
 	})
 }
 
-func TestBuildProviderOpenCodeRouting(t *testing.T) {
+func TestBuildProviderAllowsMultipleCompletionsProviders(t *testing.T) {
 	t.Parallel()
+	env := testEnv(t)
+	providerCfg := config.ProviderConfig{
+		ID:      "custom",
+		BaseURL: "http://test.b32.i2p/v1",
+		Type:    catwalk.TypeCompletions,
+	}
+	coord := newTestCoordinator(t, env, "custom", providerCfg)
+	model := config.SelectedModel{Model: "some-model", Provider: "custom"}
 
-	for _, providerID := range []string{
-		string(catwalk.InferenceProviderOpenCodeZen),
-		string(catwalk.InferenceProviderOpenCodeGo),
+	provider, err := coord.buildProvider(providerCfg, model, false, catwalk.TypeCompletions)
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+
+	for _, id := range []string{"opencode-zen", "openai", "hyper"} {
+		cfg := providerCfg
+		cfg.ID = id
+		selected := model
+		selected.Provider = id
+		provider, err := coord.buildProvider(cfg, selected, false, catwalk.TypeCompletions)
+		require.NoError(t, err)
+		require.NotNil(t, provider)
+	}
+
+	otherModel := model
+	otherModel.Provider = "openai"
+	_, err = coord.buildProvider(providerCfg, otherModel, false, catwalk.TypeCompletions)
+	require.ErrorContains(t, err, "does not match")
+
+	for _, wireType := range []catwalk.Type{catwalk.TypeResponses, catwalk.TypeMessages, "unknown"} {
+		_, err := coord.buildProvider(providerCfg, model, false, wireType)
+		require.ErrorContains(t, err, "completions API")
+	}
+
+	providerCfg.Type = catwalk.TypeMessages
+	_, err = coord.buildProvider(providerCfg, model, false, catwalk.TypeCompletions)
+	require.ErrorContains(t, err, "completions API")
+}
+
+func TestBuildProviderRejectsInvalidResolvedSettings(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t)
+	coord := newTestCoordinator(t, env, "custom", config.ProviderConfig{})
+	model := config.SelectedModel{Model: "some-model", Provider: "custom"}
+
+	for _, tt := range []struct {
+		name    string
+		baseURL string
+		apiKey  string
+		want    string
+	}{
+		{name: "empty URL", want: "base URL must be an HTTP or HTTPS URL with a host"},
+		{name: "missing host", baseURL: "https:///v1", want: "base URL must be an HTTP or HTTPS URL with a host"},
+		{name: "unsupported scheme", baseURL: "file://localhost/v1", want: "base URL must be an HTTP or HTTPS URL with a host"},
+		{name: "URL resolution error", baseURL: "$", want: "resolving custom provider base URL"},
+		{name: "key resolution error", baseURL: "http://test.b32.i2p/v1", apiKey: "$", want: "resolving custom provider API key"},
 	} {
-		t.Run(providerID, func(t *testing.T) {
-			t.Parallel()
-			env := testEnv(t)
-			providerCfg := config.ProviderConfig{
-				ID:      providerID,
-				BaseURL: "https://opencode.ai/zen/v1",
-				Type:    catwalk.TypeCompletions,
-				APIKey:  "$OPENCODE_API_KEY",
-			}
-			coord := newTestCoordinator(t, env, providerID, providerCfg)
-
-			for _, wireType := range []catwalk.Type{catwalk.TypeCompletions, catwalk.TypeResponses, catwalk.TypeMessages} {
-				provider, err := coord.buildProvider(providerCfg, config.SelectedModel{
-					Model:    "some-model",
-					Provider: providerID,
-				}, false, wireType)
-				require.NoError(t, err, wireType)
-				require.NotNil(t, provider, wireType)
-			}
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.ProviderConfig{ID: "custom", BaseURL: tt.baseURL, APIKey: tt.apiKey}
+			_, err := coord.buildProvider(cfg, model, false, catwalk.TypeCompletions)
+			require.ErrorContains(t, err, tt.want)
 		})
 	}
 }

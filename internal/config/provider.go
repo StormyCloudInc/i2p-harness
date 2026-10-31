@@ -167,6 +167,11 @@ func Providers(cfg *Config) ([]catwalk.Provider, error) {
 // Hyper token refresher for retrying on 401. Only the first call in a process
 // fetches; later calls return the memoized result and ignore both arguments.
 func LoadProviders(ctx context.Context, cfg *Config, refreshHyper HyperTokenRefresher) ([]catwalk.Provider, error) {
+	// Check before the process-wide cache: a previous catalog load must not
+	// make built-in providers visible when only custom providers are enabled.
+	if cfg.Options.DisableDefaultProviders {
+		return nil, nil
+	}
 	providerOnce.Do(func() {
 		var wg sync.WaitGroup
 		providers := csync.NewSlice[catwalk.Provider]()

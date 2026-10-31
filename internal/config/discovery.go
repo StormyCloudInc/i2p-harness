@@ -8,16 +8,21 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/discover"
+	"github.com/charmbracelet/crush/internal/i2p"
 )
 
 // discoveryProbeTimeout bounds the inline probe of a provider that has no
 // cached models yet.
 const discoveryProbeTimeout = 3 * time.Second
+
+// I2P tunnel setup can take longer than a direct connection.
+const i2pDiscoveryProbeTimeout = 60 * time.Second
 
 // discoveryJob is one custom provider whose models come from its /models
 // endpoint.
@@ -82,7 +87,19 @@ func (s *ConfigStore) resolveDiscoveredModels(ctx context.Context, jobs []discov
 	}
 	s.cachedDiscovery = cached
 
-	probeCtx, cancel := context.WithTimeout(ctx, discoveryProbeTimeout)
+	timeout := discoveryProbeTimeout
+	for _, job := range misses {
+		baseURL, err := resolver.ResolveValue(job.cfg.BaseURL)
+		if err != nil {
+			continue
+		}
+		parsed, err := url.Parse(strings.TrimSpace(baseURL))
+		if err == nil && i2p.IsI2PHost(parsed.Hostname()) {
+			timeout = i2pDiscoveryProbeTimeout
+			break
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	for id, models := range s.probeAndCache(probeCtx, misses, resolver) {
 		found[id] = models

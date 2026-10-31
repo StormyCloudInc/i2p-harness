@@ -42,14 +42,14 @@ func NewCoordinator(
 	}
 
 	const (
-		providerID = "test-openai-compat"
+		providerID = "custom"
 		modelID    = "test-model"
 	)
 	cfg.Config().Providers.Set(providerID, config.ProviderConfig{
 		ID:      providerID,
 		Name:    "Test",
 		Type:    catwalk.TypeCompletions,
-		BaseURL: "http://127.0.0.1:0/v1",
+		BaseURL: "http://test.b32.i2p/v1",
 		APIKey:  "test",
 		Models:  []catwalk.Model{{ID: modelID, DefaultMaxTokens: 4096}},
 	})

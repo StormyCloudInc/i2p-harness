@@ -53,11 +53,11 @@ func TestSubAgentRetriesWithRenewedCredential(t *testing.T) {
 	env := testEnv(t)
 	crushJSON := fmt.Sprintf(`{
   "options": {"disable_default_providers": true, "disable_provider_auto_update": true},
-  "providers": {"mock": {"id": "mock", "name": "Mock", "type": "openai-compat",
+  "providers": {"custom": {"id": "custom", "name": "Mock", "type": "openai-compat",
     "base_url": %q, "api_key": "first",
     "models": [{"id": "mock-model", "name": "Mock", "context_window": 8192, "default_max_tokens": 128}]}},
-  "models": {"large": {"provider": "mock", "model": "mock-model"},
-             "small": {"provider": "mock", "model": "mock-model"}}
+  "models": {"large": {"provider": "custom", "model": "mock-model"},
+             "small": {"provider": "custom", "model": "mock-model"}}
 }`, srv.URL)
 	require.NoError(t, os.WriteFile(filepath.Join(env.workingDir, "crush.json"), []byte(crushJSON), 0o644))
 	cfg, err := config.Init(t.Context(), env.workingDir, "", false)
@@ -81,10 +81,10 @@ func TestSubAgentRetriesWithRenewedCredential(t *testing.T) {
 	// The credential is renewed from a key template, the simplest refresh
 	// that needs no token endpoint.
 	t.Setenv("CRUSH_SHARED_MODELS_TEST_KEY", "second")
-	pc, ok := cfg.Config().Providers.Get("mock")
+	pc, ok := cfg.Config().Providers.Get("custom")
 	require.True(t, ok)
 	pc.APIKeyTemplate = "$CRUSH_SHARED_MODELS_TEST_KEY"
-	cfg.Config().Providers.Set("mock", pc)
+	cfg.Config().Providers.Set("custom", pc)
 
 	parent, err := env.sessions.Create(t.Context(), "parent")
 	require.NoError(t, err)

@@ -10,29 +10,29 @@ import (
 )
 
 func TestShellConfigProviderAddAndModel(t *testing.T) {
-	store := loadCrushSh(t, `provider add myllm \
+	store := loadCrushSh(t, `provider add custom \
   --type openai-compat \
   --base-url "http://localhost:1234/v1" \
   --api-key "sk-test" \
   --discover-models false \
   --extra-body '{"service_tier":"flex"}' \
   --provider-options '{"region":"local"}'
-provider add myllm \
+provider add custom \
   --extra-body '{"stream":true}' \
   --provider-options '{"mode":"test"}'
-model add myllm/foo-1 --name "Foo 1" --context-window 8000 \
+model add custom/foo-1 --name "Foo 1" --context-window 8000 \
   --price-input 1.25 --price-output 5 \
   --price-cache-create 2 --price-cache-hit 0.25
-model large myllm/foo-1 \
+model large custom/foo-1 \
   --top-p 0.9 --top-k 40 \
   --frequency-penalty 0.2 --presence-penalty 0.1 \
   --provider-options '{"routing":{"tier":"fast"}}'
-model large myllm/foo-1 --provider-options '{"timeout":30}'`)
+model large custom/foo-1 --provider-options '{"timeout":30}'`)
 
 	cfg := store.Config()
 
-	p, ok := cfg.Providers.Get("myllm")
-	require.True(t, ok, "myllm provider should be configured")
+	p, ok := cfg.Providers.Get("custom")
+	require.True(t, ok, "custom provider should be configured")
 	require.Equal(t, "sk-test", p.APIKey)
 	require.Equal(t, "http://localhost:1234/v1", p.BaseURL)
 	require.NotNil(t, p.AutoDiscoverModels)
@@ -53,7 +53,7 @@ model large myllm/foo-1 --provider-options '{"timeout":30}'`)
 	require.Equal(t, 0.25, model.Pricing.CacheHit)
 
 	large := cfg.Models[config.SelectedModelTypeLarge]
-	require.Equal(t, "myllm", large.Provider)
+	require.Equal(t, "custom", large.Provider)
 	require.Equal(t, "foo-1", large.Model)
 	require.NotNil(t, large.TopP)
 	require.Equal(t, 0.9, *large.TopP)
@@ -72,14 +72,14 @@ model large myllm/foo-1 --provider-options '{"timeout":30}'`)
 func TestShellConfigProviderRemove(t *testing.T) {
 	// Both providers get a model so they survive provider configuration
 	// (model-less providers are dropped); the only difference is the remove.
-	store := loadCrushSh(t, `provider add keepme --type openai-compat --base-url "http://localhost:1/v1" --api-key k
-model add keepme/m1 --name M1
+	store := loadCrushSh(t, `provider add custom --type openai-compat --base-url "http://localhost:1/v1" --api-key k
+model add custom/m1 --name M1
 provider add dropme --type openai-compat --base-url "http://localhost:2/v1" --api-key k
 model add dropme/m2 --name M2
 provider remove dropme`)
 
-	_, keep := store.Config().Providers.Get("keepme")
+	_, keep := store.Config().Providers.Get("custom")
 	_, drop := store.Config().Providers.Get("dropme")
-	require.True(t, keep, "keepme should remain")
+	require.True(t, keep, "custom should remain")
 	require.False(t, drop, "dropme should be gone after remove")
 }

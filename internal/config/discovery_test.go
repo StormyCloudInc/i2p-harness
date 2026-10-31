@@ -1,7 +1,9 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,12 +12,27 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/discover"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/stretchr/testify/require"
 )
+
+func localDiscoveryContext(t *testing.T) context.Context {
+	t.Helper()
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+			return nil, fmt.Errorf("test transport only permits loopback")
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}}
+	t.Cleanup(transport.CloseIdleConnections)
+	return discover.WithHTTPClient(t.Context(), &http.Client{Transport: transport, Timeout: 5 * time.Second})
+}
 
 // modelsServer serves an OpenAI-style /models listing whose IDs can be
 // swapped mid-test, and counts the requests it receives.
@@ -62,11 +79,11 @@ func modelIDs(models []catwalk.Model) []string {
 // against a store whose discovery cache lives in dir.
 func configureCustom(t *testing.T, dir string, pc ProviderConfig) (*ConfigStore, *Config) {
 	t.Helper()
-	cfg := &Config{Providers: csync.NewMapFrom(map[string]ProviderConfig{"local": pc})}
+	cfg := &Config{Providers: csync.NewMapFrom(map[string]ProviderConfig{"custom": pc})}
 	cfg.setDefaults(t.TempDir(), "")
 	store := testStoreWithPath(cfg, dir)
 	testEnv := env.NewFromMap(map[string]string{})
-	require.NoError(t, cfg.configureProviders(t.Context(), store, testEnv, NewShellVariableResolver(testEnv), nil))
+	require.NoError(t, cfg.configureProviders(localDiscoveryContext(t), store, testEnv, NewShellVariableResolver(testEnv), nil))
 	return store, cfg
 }
 
@@ -77,7 +94,7 @@ func TestDiscovery_CacheServesLaterStartups(t *testing.T) {
 	pc := ProviderConfig{BaseURL: server.URL + "/v1"}
 
 	store, cfg := configureCustom(t, dir, pc)
-	p, ok := cfg.Providers.Get("local")
+	p, ok := cfg.Providers.Get("custom")
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b"}, modelIDs(p.Models))
 	require.Empty(t, store.cachedDiscovery, "a fresh probe is not a cache hit")
@@ -85,7 +102,7 @@ func TestDiscovery_CacheServesLaterStartups(t *testing.T) {
 	server.Close()
 
 	store, cfg = configureCustom(t, dir, pc)
-	p, ok = cfg.Providers.Get("local")
+	p, ok = cfg.Providers.Get("custom")
 	require.True(t, ok, "cached models keep an unreachable provider usable")
 	require.Equal(t, []string{"a", "b"}, modelIDs(p.Models))
 	require.Len(t, store.cachedDiscovery, 1)
@@ -100,7 +117,7 @@ func TestDiscovery_BaseURLChangeInvalidatesCache(t *testing.T) {
 	configureCustom(t, dir, ProviderConfig{BaseURL: first.URL + "/v1"})
 	_, cfg := configureCustom(t, dir, ProviderConfig{BaseURL: second.URL + "/v1"})
 
-	p, ok := cfg.Providers.Get("local")
+	p, ok := cfg.Providers.Get("custom")
 	require.True(t, ok)
 	require.Equal(t, []string{"new"}, modelIDs(p.Models))
 }
@@ -119,7 +136,7 @@ func TestDiscovery_ConfiguredModelsWinOverCache(t *testing.T) {
 	configureCustom(t, dir, pc)
 	_, cfg := configureCustom(t, dir, pc)
 
-	p, ok := cfg.Providers.Get("local")
+	p, ok := cfg.Providers.Get("custom")
 	require.True(t, ok)
 	require.Equal(t, []string{"b", "a"}, modelIDs(p.Models))
 	require.Equal(t, "Mine", p.Models[0].Name)
@@ -132,7 +149,7 @@ func loadIsolated(t *testing.T, workDir string) *ConfigStore {
 	t.Helper()
 	resetProviderState()
 	t.Cleanup(resetProviderState)
-	store, err := Load(t.Context(), workDir, filepath.Join(workDir, ".crush"), false)
+	store, err := Load(localDiscoveryContext(t), workDir, filepath.Join(workDir, ".crush"), false)
 	require.NoError(t, err)
 	return store
 }
@@ -151,10 +168,10 @@ func TestDiscovery_StartupKeepsSelectionAndRefreshesInBackground(t *testing.T) {
 	server := newModelsServer(t, "a", "b")
 	writeGlobalConfig(t, globalDir, fmt.Sprintf(`{
 		"options": {"disable_default_providers": true},
-		"providers": {"local": {"base_url": %q}},
+		"providers": {"custom": {"base_url": %q}},
 		"models": {
-			"large": {"provider": "local", "model": "b"},
-			"small": {"provider": "local", "model": "b"}
+			"large": {"provider": "custom", "model": "b"},
+			"small": {"provider": "custom", "model": "b"}
 		}
 	}`, server.URL+"/v1"))
 
@@ -167,23 +184,23 @@ func TestDiscovery_StartupKeepsSelectionAndRefreshesInBackground(t *testing.T) {
 
 	cfg := store.Config()
 	require.Equal(t, "b", cfg.Models[SelectedModelTypeLarge].Model)
-	p, ok := cfg.Providers.Get("local")
+	p, ok := cfg.Providers.Get("custom")
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b"}, modelIDs(p.Models))
 
-	reloaded, err := store.RefreshDiscoveredModels(t.Context())
+	reloaded, err := store.RefreshDiscoveredModels(localDiscoveryContext(t))
 	require.NoError(t, err)
 	require.True(t, reloaded)
-	p, ok = store.Config().Providers.Get("local")
+	p, ok = store.Config().Providers.Get("custom")
 	require.True(t, ok)
 	require.Equal(t, []string{"a", "b", "c"}, modelIDs(p.Models))
 
-	reloaded, err = store.RefreshDiscoveredModels(t.Context())
+	reloaded, err = store.RefreshDiscoveredModels(localDiscoveryContext(t))
 	require.NoError(t, err)
 	require.False(t, reloaded, "an unchanged listing does not reload")
 }
 
-func TestDiscovery_ReloadDiscoversNewProvider(t *testing.T) {
+func TestDiscovery_ReloadDiscoversChangedUpstream(t *testing.T) {
 	globalDir := t.TempDir()
 	workDir := t.TempDir()
 	t.Setenv("CRUSH_GLOBAL_CONFIG", globalDir)
@@ -192,21 +209,18 @@ func TestDiscovery_ReloadDiscoversNewProvider(t *testing.T) {
 	known := newModelsServer(t, "a")
 	writeGlobalConfig(t, globalDir, fmt.Sprintf(`{
 		"options": {"disable_default_providers": true},
-		"providers": {"local": {"base_url": %q}}
+		"providers": {"custom": {"base_url": %q}}
 	}`, known.URL+"/v1"))
 	store := loadIsolated(t, workDir)
 
 	added := newModelsServer(t, "x", "y")
 	writeGlobalConfig(t, globalDir, fmt.Sprintf(`{
 		"options": {"disable_default_providers": true},
-		"providers": {
-			"local": {"base_url": %q},
-			"added": {"base_url": %q}
-		}
-	}`, known.URL+"/v1", added.URL+"/v1"))
-	require.NoError(t, store.ReloadFromDisk(t.Context()))
+		"providers": {"custom": {"base_url": %q}}
+	}`, added.URL+"/v1"))
+	require.NoError(t, store.ReloadFromDisk(localDiscoveryContext(t)))
 
-	p, ok := store.Config().Providers.Get("added")
-	require.True(t, ok, "a provider added mid-session is discovered on reload")
+	p, ok := store.Config().Providers.Get("custom")
+	require.True(t, ok, "the updated upstream is discovered on reload")
 	require.Equal(t, []string{"x", "y"}, modelIDs(p.Models))
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/crush/internal/config"
+	"github.com/charmbracelet/crush/internal/i2p"
 	"github.com/charmbracelet/crush/internal/proto"
 	"github.com/charmbracelet/crush/internal/server"
 	"github.com/google/uuid"
@@ -51,7 +52,7 @@ func NewClient(path, network, address string) (*Client, error) {
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
 	p.SetUnencryptedHTTP2(true)
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := i2p.NewTransport()
 	tr.Protocols = p
 	tr.DialContext = c.dialer
 	if c.network == "npipe" || c.network == "unix" {
@@ -220,7 +221,11 @@ func (c *Client) dialer(ctx context.Context, network, address string) (net.Conn,
 	case "unix":
 		return d.DialContext(ctx, "unix", c.addr)
 	default:
-		return d.DialContext(ctx, network, address)
+		host, _, err := net.SplitHostPort(address)
+		if err != nil || !i2p.IsI2PHost(host) {
+			return nil, fmt.Errorf("remote backend address %q must be an I2P host", address)
+		}
+		return i2p.I2PDialer()(ctx, network, address)
 	}
 }
 

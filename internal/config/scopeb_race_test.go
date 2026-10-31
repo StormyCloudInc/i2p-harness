@@ -26,8 +26,8 @@ func TestScopeB_InPlaceMutationRace(t *testing.T) {
 	t.Cleanup(resetProviderState)
 
 	cfg := `{
-		"models": {"large": {"provider": "openai", "model": "gpt-4"}},
-		"providers": {"openai": {"api_key": "k", "models": [{"id": "gpt-4", "name": "GPT-4"}]}},
+		"models": {"large": {"provider": "custom", "model": "gpt-4"}},
+		"providers": {"custom": {"base_url": "http://localhost:1/v1", "api_key": "k", "models": [{"id": "gpt-4", "name": "GPT-4"}]}},
 		"options": {"tui": {"compact_mode": false}}
 	}`
 	if err := os.WriteFile(configPath, []byte(cfg), 0o600); err != nil {

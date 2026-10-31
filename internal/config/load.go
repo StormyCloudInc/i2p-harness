@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"charm.land/catwalk/v3/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/agent/hyper"
@@ -299,41 +299,11 @@ func Load(ctx context.Context, workingDir, dataDir string, debug bool) (*ConfigS
 		assignIfNil(&cfg.Options.TUI.Transparent, true)
 	}
 
-	// Load known providers, this loads the config from catwalk. A failed
-	// refresh still yields the cached or embedded catalog, so only an empty
-	// list is fatal: starting up without providers is worse than starting
-	// up with slightly stale ones. Pass a Hyper token refresher so the
-	// catalog fetch can retry on 401.
-	providers, err := LoadProviders(ctx, cfg, func(ctx context.Context) error {
-		return store.RefreshOAuthToken(ctx, ScopeGlobal, "hyper")
-	})
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, ctxErr
+	if err := cfg.validateCustomProvider(); err != nil {
+		return nil, fmt.Errorf("invalid provider configuration: %w", err)
 	}
-	if err != nil {
-		if len(providers) == 0 {
-			return nil, err
-		}
-		slog.Warn("Continuing with the previously known providers", "error", err)
-	}
-	store.knownProviders = providers
-
-	// When Catwalk refreshed its catalog this run, give the model
-	// catalogs that shadow Catwalk's the same treatment: the ChatGPT and
-	// Grok catalogs are otherwise only fetched at login and would freeze
-	// there while Catwalk keeps moving. Best effort; a failed fetch keeps
-	// the catalog loaded from config.
-	//
-	// The refetches publish a copy-on-write config, so re-read it
-	// afterwards: the mutations below must land on the live config rather
-	// than a snapshot the store has already replaced.
-	if CatwalkUpdated() {
-		fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		store.refetchOpenAIModels(fetchCtx, ScopeGlobal)
-		store.refetchGrokModels(fetchCtx, ScopeGlobal)
-		cancel()
-		cfg = store.Config()
-	}
+	// Built-in provider catalogs are not available.
+	cfg.Options.DisableDefaultProviders = true
 
 	env := env.New()
 	// Configure providers
@@ -348,9 +318,14 @@ func Load(ctx context.Context, workingDir, dataDir string, debug bool) (*ConfigS
 	// Apply top-level env vars before configuring providers so variables
 	// like AWS_PROFILE are visible to the AWS SDK credential chain.
 	cfg.applyEnv(valueResolver)
+	if err := cfg.validateCustomProviderURL(valueResolver); err != nil {
+		return nil, err
+	}
 
-	if err := cfg.configureProviders(ctx, store, env, valueResolver, store.knownProviders); err != nil {
-		return nil, fmt.Errorf("failed to configure providers: %w", err)
+	if cfg.Providers.Len() > 0 {
+		if err := cfg.configureProviders(ctx, store, env, valueResolver, store.knownProviders); err != nil {
+			return nil, fmt.Errorf("failed to configure providers: %w", err)
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -429,6 +404,54 @@ func PushPopCrushEnv() func() {
 		}
 	}
 	return restore
+}
+
+// ValidateCustomProviderID checks an ID can be safely used in a config path.
+func ValidateCustomProviderID(id string) error {
+	if id == "" {
+		return fmt.Errorf("provider ID cannot be empty")
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return fmt.Errorf("provider ID %q must contain only letters, numbers, hyphens, or underscores", id)
+		}
+	}
+	return nil
+}
+
+// validateCustomProvider validates OpenAI-compatible upstreams before discovery.
+func (c *Config) validateCustomProvider() error {
+	for id, provider := range c.Providers.Seq2() {
+		if err := ValidateCustomProviderID(id); err != nil {
+			return err
+		}
+		if provider.OAuthToken != nil {
+			return fmt.Errorf("provider %q supports an optional API key, not OAuth", id)
+		}
+		if provider.Type != "" && NormalizeProviderType(provider.Type) != catwalk.TypeCompletions {
+			return fmt.Errorf("provider %q must use the OpenAI-compatible completions API", id)
+		}
+		for _, model := range provider.Models {
+			if model.Type != "" && NormalizeProviderType(model.Type) != catwalk.TypeCompletions {
+				return fmt.Errorf("model %q of provider %q must use the OpenAI-compatible completions API", model.ID, id)
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateCustomProviderURL(resolver VariableResolver) error {
+	for id, provider := range c.Providers.Seq2() {
+		baseURL, err := resolver.ResolveValue(provider.BaseURL)
+		if err != nil {
+			return fmt.Errorf("resolving provider %q base URL: %w", id, err)
+		}
+		u, err := url.Parse(baseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+			return fmt.Errorf("provider %q base URL must be an HTTP or HTTPS URL with a host", id)
+		}
+	}
+	return nil
 }
 
 func (c *Config) configureProviders(ctx context.Context, store *ConfigStore, env env.Env, resolver VariableResolver, knownProviders []catwalk.Provider) error {

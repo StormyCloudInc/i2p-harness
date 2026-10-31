@@ -10,12 +10,21 @@ import (
 	"time"
 
 	"charm.land/catwalk/v3/pkg/catwalk"
+	"github.com/charmbracelet/crush/internal/i2p"
 )
 
 // httpClient is shared across all discovery and enrichment calls. It
 // has a reasonable timeout so individual requests cannot block forever
 // even if the caller forgets to set a context deadline.
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = &http.Client{Timeout: 60 * time.Second, Transport: i2p.NewTransport()}
+
+type httpClientKey struct{}
+
+// WithHTTPClient supplies an HTTP client for discovery operations on ctx.
+// Callers are responsible for enforcing the same network policy as Crush.
+func WithHTTPClient(ctx context.Context, client *http.Client) context.Context {
+	return context.WithValue(ctx, httpClientKey{}, client)
+}
 
 // stripV1Suffix removes a trailing /v1 from a base URL. Enricher
 // endpoints (e.g. Ollama's /api/show, LM Studio's /api/v1/models) are
@@ -71,7 +80,11 @@ func doRequest(ctx context.Context, method, baseURL, path, apiKey string, extraH
 		req.Header.Set(k, resolved)
 	}
 
-	return httpClient.Do(req)
+	client := httpClient
+	if override, ok := ctx.Value(httpClientKey{}).(*http.Client); ok && override != nil {
+		client = override
+	}
+	return client.Do(req)
 }
 
 // Config holds the provider configuration needed for model discovery.

@@ -81,10 +81,10 @@ type Models struct {
 	providers []catwalk.Provider
 
 	keyMap struct {
+		Add      key.Binding
 		Tab      key.Binding
 		UpDown   key.Binding
 		Select   key.Binding
-		Edit     key.Binding
 		Next     key.Binding
 		Previous key.Binding
 		Close    key.Binding
@@ -121,13 +121,10 @@ func NewModels(com *common.Common, isOnboarding bool) (*Models, error) {
 		key.WithKeys("tab", "shift+tab"),
 		key.WithHelp("tab", "toggle type"),
 	)
+	m.keyMap.Add = key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("ctrl+a", "add provider"))
 	m.keyMap.Select = key.NewBinding(
 		key.WithKeys("enter", "ctrl+y"),
 		key.WithHelp("enter", "confirm"),
-	)
-	m.keyMap.Edit = key.NewBinding(
-		key.WithKeys("ctrl+e"),
-		key.WithHelp("ctrl+e", "edit"),
 	)
 	m.keyMap.UpDown = key.NewBinding(
 		key.WithKeys("up", "down"),
@@ -171,6 +168,8 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
+		case key.Matches(msg, m.keyMap.Add):
+			return ActionOpenDialog{DialogID: ProviderAddID}
 		case key.Matches(msg, m.keyMap.Close):
 			return ActionClose{}
 		case key.Matches(msg, m.keyMap.Previous):
@@ -189,7 +188,7 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 				m.list.SelectNext()
 			}
 			m.list.ScrollToSelected()
-		case key.Matches(msg, m.keyMap.Select, m.keyMap.Edit):
+		case key.Matches(msg, m.keyMap.Select):
 			selectedItem := m.list.SelectedItem()
 			if selectedItem == nil {
 				break
@@ -200,13 +199,10 @@ func (m *Models) HandleMsg(msg tea.Msg) Action {
 				break
 			}
 
-			isEdit := key.Matches(msg, m.keyMap.Edit)
-
 			return ActionSelectModel{
-				Provider:       modelItem.prov,
-				Model:          modelItem.SelectedModel(),
-				ModelType:      modelItem.SelectedModelType(),
-				ReAuthenticate: isEdit,
+				Provider:  modelItem.prov,
+				Model:     modelItem.SelectedModel(),
+				ModelType: modelItem.SelectedModelType(),
 			}
 		case key.Matches(msg, m.keyMap.Tab):
 			if m.isOnboarding {
@@ -277,7 +273,7 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	rc.TitleInfo = m.modelTypeRadioView()
 
 	if m.isOnboarding {
-		titleText := t.Dialog.PrimaryText.Render("To start, let's choose a provider and model.")
+		titleText := t.Dialog.PrimaryText.Render("Choose a model or press ctrl+a to add a provider.")
 		rc.AddPart(titleText)
 	}
 
@@ -310,17 +306,16 @@ func (m *Models) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 func (m *Models) ShortHelp() []key.Binding {
 	if m.isOnboarding {
 		return []key.Binding{
+			m.keyMap.Add,
 			m.keyMap.UpDown,
 			m.keyMap.Select,
 		}
 	}
 	h := []key.Binding{
+		m.keyMap.Add,
 		m.keyMap.UpDown,
 		m.keyMap.Tab,
 		m.keyMap.Select,
-	}
-	if m.isSelectedConfigured() {
-		h = append(h, m.keyMap.Edit)
 	}
 	h = append(h, m.keyMap.Close)
 	return h
@@ -329,20 +324,6 @@ func (m *Models) ShortHelp() []key.Binding {
 // FullHelp returns the full help view.
 func (m *Models) FullHelp() [][]key.Binding {
 	return [][]key.Binding{m.ShortHelp()}
-}
-
-func (m *Models) isSelectedConfigured() bool {
-	selectedItem := m.list.SelectedItem()
-	if selectedItem == nil {
-		return false
-	}
-	modelItem, ok := selectedItem.(*ModelItem)
-	if !ok {
-		return false
-	}
-	providerID := string(modelItem.prov.ID)
-	_, isConfigured := m.com.Config().Providers.Get(providerID)
-	return isConfigured
 }
 
 // setProviderItems sets the provider items in the list.

@@ -1,7 +1,6 @@
 package discover
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,7 +31,7 @@ func TestDiscoverModels(t *testing.T) {
 		APIKey:  "test-key",
 	}
 
-	models, err := DiscoverModels(context.Background(), cfg, &mockResolver{})
+	models, err := DiscoverModels(localHTTPContext(t), cfg, &mockResolver{})
 	require.NoError(t, err)
 	require.Len(t, models, 2)
 	require.Equal(t, "model-a", models[0].ID)
@@ -60,7 +59,7 @@ func TestDiscoverModels_ExistingModelsWin(t *testing.T) {
 		},
 	}
 
-	models, err := DiscoverModels(context.Background(), cfg, &mockResolver{})
+	models, err := DiscoverModels(localHTTPContext(t), cfg, &mockResolver{})
 	require.NoError(t, err)
 	require.Len(t, models, 2)
 
@@ -85,7 +84,7 @@ func TestDiscoverModels_HTTPError(t *testing.T) {
 		APIKey:  "test-key",
 	}
 
-	models, err := DiscoverModels(context.Background(), cfg, &mockResolver{})
+	models, err := DiscoverModels(localHTTPContext(t), cfg, &mockResolver{})
 	require.Error(t, err)
 	require.Nil(t, models)
 }
@@ -107,7 +106,7 @@ func TestDiscoverModels_ExtraHeaders(t *testing.T) {
 		},
 	}
 
-	models, err := DiscoverModels(context.Background(), cfg, &mockResolver{})
+	models, err := DiscoverModels(localHTTPContext(t), cfg, &mockResolver{})
 	require.NoError(t, err)
 	require.Len(t, models, 1)
 }
@@ -150,7 +149,7 @@ func TestDiscoverModels_ResolvesShellVariables(t *testing.T) {
 		"$MY_HEADER":  "resolved-header",
 	}}
 
-	models, err := DiscoverModels(context.Background(), cfg, resolver)
+	models, err := DiscoverModels(localHTTPContext(t), cfg, resolver)
 	require.NoError(t, err)
 	require.Len(t, models, 1)
 }
@@ -177,7 +176,7 @@ func TestDiscoverModels_SkipsEmptyExtraHeaders(t *testing.T) {
 		"$UNSET_VAR": "",
 	}}
 
-	models, err := DiscoverModels(context.Background(), cfg, resolver)
+	models, err := DiscoverModels(localHTTPContext(t), cfg, resolver)
 	require.NoError(t, err)
 	require.Len(t, models, 1)
 }
@@ -196,7 +195,7 @@ func TestDiscoverModels_NoAuthWhenNoAPIKey(t *testing.T) {
 		APIKey:  "",
 	}
 
-	models, err := DiscoverModels(context.Background(), cfg, &mockResolver{})
+	models, err := DiscoverModels(localHTTPContext(t), cfg, &mockResolver{})
 	require.NoError(t, err)
 	require.Len(t, models, 1)
 }

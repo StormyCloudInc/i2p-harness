@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,15 +30,14 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/discover"
-	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/hooks"
+	"github.com/charmbracelet/crush/internal/i2p"
 	"github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/oauth"
-	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	openaioauth "github.com/charmbracelet/crush/internal/oauth/openai"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/proto"
@@ -70,14 +70,14 @@ var (
 	errModelNotFound              = errors.New("model not found in provider config")
 )
 
-// servingProvider returns the fantasy provider package that serves the
-// given provider and model. Providers with bespoke SDKs (Bedrock, Azure,
-// Google, Vertex AI, OpenRouter, Vercel, Hyper) are selected by ID;
-// everything else, gateways like Copilot and OpenCode included, is
-// determined by the catwalk type, which describes the API endpoint
-// format the model speaks and so the key its provider options are read
-// from.
+// servingProvider returns the fantasy provider package whose options are
+// used for the given provider and model.
 func servingProvider(providerCfg config.ProviderConfig, model catwalk.Model) string {
+	// Configured completions providers all use the same client regardless of
+	// whether their user-chosen ID matches a former built-in provider.
+	if config.NormalizeProviderType(model.EffectiveType(providerCfg.Type)) == catwalk.TypeCompletions {
+		return openaicompat.Name
+	}
 	switch providerCfg.ID {
 	case string(catwalk.InferenceProviderBedrock), string(catwalk.InferenceProviderBedrockEurope):
 		return bedrock.Name
@@ -152,6 +152,8 @@ type coordinator struct {
 	notify      pubsub.Publisher[notify.Notification]
 	runComplete pubsub.Publisher[notify.RunComplete]
 	interactive bool
+	// providerHTTPClient is set only by tests; production uses the SAM transport.
+	providerHTTPClient *http.Client
 
 	// agentMu guards mainAgent and mainAgentName: SetMainAgent runs on
 	// HTTP handler goroutines while runs, cancels, and probes read the
@@ -485,6 +487,11 @@ func effectiveReasoningEffort(model Model) string {
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
 	options := fantasy.ProviderOptions{}
+	if config.NormalizeProviderType(model.CatwalkCfg.EffectiveType(providerCfg.Type)) == catwalk.TypeCompletions {
+		// Provider IDs are user-defined and must not activate old provider-
+		// specific request mutations for otherwise identical custom endpoints.
+		providerCfg.ID = ""
+	}
 
 	cfgOpts := []byte("{}")
 	providerCfgOpts := []byte("{}")
@@ -1033,12 +1040,7 @@ func (c *coordinator) buildModel(ctx context.Context, slot config.SelectedModelT
 		return Model{}, err
 	}
 
-	modelID := modelCfg.Model
-	if modelCfg.Provider == openrouter.Name && isExactoSupported(modelID) {
-		modelID += ":exacto"
-	}
-
-	languageModel, err := provider.LanguageModel(ctx, modelID)
+	languageModel, err := provider.LanguageModel(ctx, modelCfg.Model)
 	if err != nil {
 		return Model{}, err
 	}
@@ -1048,12 +1050,6 @@ func (c *coordinator) buildModel(ctx context.Context, slot config.SelectedModelT
 	// applied per request, so retries get a fresh budget each attempt.
 	languageModel = newRequestTimeoutModel(languageModel, c.cfg.Config().Options.GetRequestTimeout())
 
-	// Hyper completions no longer report the hypercredit balance, so wrap
-	// the Hyper models to fetch it from /v1/credits on every request.
-	if modelCfg.Provider == hyper.Name {
-		languageModel = newHyperCreditsModel(languageModel, c.hyperAPIKey)
-	}
-
 	return Model{
 		Model:        languageModel,
 		CatwalkCfg:   *catwalkModel,
@@ -1062,13 +1058,6 @@ func (c *coordinator) buildModel(ctx context.Context, slot config.SelectedModelT
 		OAuth:        providerCfg.OAuthToken != nil,
 		ProviderName: providerCfg.Name,
 	}, nil
-}
-
-// hyperAPIKey resolves the Hyper API key from the live config, so an
-// OAuth token refreshed after the models were built is picked up by the
-// next credits fetch.
-func (c *coordinator) hyperAPIKey() string {
-	return config.ResolveHyperAPIKey(c.cfg.Config())
 }
 
 func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
@@ -1096,8 +1085,15 @@ func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map
 		opts = append(opts, anthropic.WithBaseURL(baseURL))
 	}
 
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, anthropic.WithHTTPClient(httpClient))
 	}
 	return anthropic.New(opts...)
@@ -1129,6 +1125,15 @@ func (c *coordinator) buildOpenaiProvider(baseURL, apiKey string, headers map[st
 			Token: token,
 		}
 	}
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
+	}
 	if httpClient != nil {
 		opts = append(opts, openai.WithHTTPClient(httpClient))
 	}
@@ -1154,8 +1159,15 @@ func (c *coordinator) buildOpenrouterProvider(_, apiKey string, headers map[stri
 	opts := []openrouter.Option{
 		openrouter.WithAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, openrouter.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -1168,8 +1180,15 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	opts := []vercel.Option{
 		vercel.WithAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, vercel.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -1178,53 +1197,44 @@ func (c *coordinator) buildVercelProvider(_, apiKey string, headers map[string]s
 	return vercel.New(opts...)
 }
 
-func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any, providerID string, isSubAgent bool, wireType catwalk.Type) (fantasy.Provider, error) {
+func (c *coordinator) buildOpenaiCompatProvider(baseURL, apiKey string, headers map[string]string, extraBody map[string]any) (fantasy.Provider, error) {
 	opts := []openaicompat.Option{
 		openaicompat.WithBaseURL(baseURL),
 		openaicompat.WithAPIKey(apiKey),
 	}
 
-	// Set HTTP client based on provider and debug mode.
-	var httpClient *http.Client
-	// Gateway providers route per model between chat completions and the
-	// responses API based on the model's catwalk type.
-	responsesFunc := func(string) bool { return wireType == catwalk.TypeResponses }
-	switch providerID {
-	case string(catwalk.InferenceProviderCopilot):
-		opts = append(
-			opts,
-			openaicompat.WithUseResponsesAPI(),
-			openaicompat.WithResponsesAPIFunc(responsesFunc),
-		)
-		httpClient = copilot.NewClient(isSubAgent, c.cfg.Config().Options.Debug)
-
-	case string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
-		opts = append(
-			opts,
-			openaicompat.WithUseResponsesAPI(),
-			openaicompat.WithResponsesAPIFunc(responsesFunc),
-		)
-
-	case hyper.Name:
-		// Hyper may route requests through a Prism model; capture the
-		// router headers so the UI can show which model answered.
-		opts = append(
-			opts,
-			openaicompat.WithLanguageModelOptions(
-				openai.WithLanguageModelHeaderFunc(hyper.HeaderFunc),
-			),
-		)
+	client := c.providerHTTPClient
+	if client == nil {
+		transport := i2p.NewTransport()
+		transport.ResponseHeaderTimeout = 10 * time.Minute
+		var roundTripper http.RoundTripper = transport
+		if c.cfg.Config().Options.Debug {
+			roundTripper = &log.HTTPRoundTripLogger{Transport: transport}
+		}
+		client = &http.Client{Transport: roundTripper}
 	}
-	if httpClient == nil && c.cfg.Config().Options.Debug {
-		httpClient = log.NewHTTPClient()
-	}
-	if httpClient != nil {
-		opts = append(opts, openaicompat.WithHTTPClient(httpClient))
-	}
+	opts = append(opts, openaicompat.WithHTTPClient(client))
 
 	if len(headers) > 0 {
 		opts = append(opts, openaicompat.WithHeaders(headers))
 	}
+	// The SDK otherwise inherits OpenAI credentials and headers from the
+	// environment, even when this provider has no configured API key.
+	sdkOpts := []openaisdk.RequestOption{
+		openaisdk.WithAPIKey(apiKey),
+		openaisdk.WithAdminAPIKey(""),
+		openaisdk.WithHeaderDel("OpenAI-Organization"),
+		openaisdk.WithHeaderDel("OpenAI-Project"),
+	}
+	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
+		if key, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(key) != "" {
+			sdkOpts = append(sdkOpts, openaisdk.WithHeaderDel(strings.TrimSpace(key)))
+		}
+	}
+	for key, value := range headers {
+		sdkOpts = append(sdkOpts, openaisdk.WithHeader(key, value))
+	}
+	opts = append(opts, openaicompat.WithSDKOptions(sdkOpts...))
 
 	for extraKey, extraValue := range extraBody {
 		opts = append(opts, openaicompat.WithSDKOptions(openaisdk.WithJSONSet(extraKey, extraValue)))
@@ -1239,8 +1249,15 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 		azure.WithAPIKey(apiKey),
 		azure.WithUseResponsesAPI(),
 	}
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, azure.WithHTTPClient(httpClient))
 	}
 	if options == nil {
@@ -1258,8 +1275,15 @@ func (c *coordinator) buildAzureProvider(baseURL, apiKey string, headers map[str
 
 func (c *coordinator) buildBedrockProvider(apiKey string, headers map[string]string, providerID string) (fantasy.Provider, error) {
 	var opts []bedrock.Option
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, bedrock.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -1290,8 +1314,15 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 		google.WithBaseURL(baseURL),
 		google.WithGeminiAPIKey(apiKey),
 	}
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, google.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -1302,8 +1333,15 @@ func (c *coordinator) buildGoogleProvider(baseURL, apiKey string, headers map[st
 
 func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, options map[string]string) (fantasy.Provider, error) {
 	opts := []google.Option{}
-	if c.cfg.Config().Options.Debug {
+	// Use I2P-aware HTTP client if I2P is enabled
+	if c.cfg.Config().Options.Debug || i2p.Enabled() {
 		httpClient := log.NewHTTPClient()
+		if httpClient == nil {
+			httpClient = i2p.NewI2PClient()
+		} else {
+			// Replace transport with I2P-aware transport
+			httpClient.Transport = i2p.NewI2PClient().Transport
+		}
 		opts = append(opts, google.WithHTTPClient(httpClient))
 	}
 	if len(headers) > 0 {
@@ -1326,101 +1364,34 @@ func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
 	return err == nil && opts.Thinking != nil
 }
 
-func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, isSubAgent bool, wireType catwalk.Type) (fantasy.Provider, error) {
+func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model config.SelectedModel, _ bool, wireType catwalk.Type) (fantasy.Provider, error) {
+	if providerCfg.ID == "" || model.Provider != providerCfg.ID {
+		return nil, errors.New("selected model provider does not match the configured provider")
+	}
+	if providerCfg.OAuthToken != nil {
+		return nil, errors.New("custom provider supports an optional API key, not OAuth")
+	}
+	if providerCfg.Type != "" && config.NormalizeProviderType(providerCfg.Type) != catwalk.TypeCompletions {
+		return nil, errors.New("custom provider must use the OpenAI-compatible completions API")
+	}
 	wireType = config.NormalizeProviderType(wireType)
-	headers := maps.Clone(providerCfg.ExtraHeaders)
-	if headers == nil {
-		headers = make(map[string]string)
+	if wireType != catwalk.TypeCompletions {
+		return nil, fmt.Errorf("model must use the OpenAI-compatible completions API: %q", wireType)
 	}
 
-	// handle special headers for anthropic
-	if wireType == catwalk.TypeMessages && c.isAnthropicThinking(model) {
-		if v, ok := headers["anthropic-beta"]; ok {
-			headers["anthropic-beta"] = v + ",interleaved-thinking-2025-05-14"
-		} else {
-			headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
-		}
+	baseURL, err := c.cfg.Resolve(providerCfg.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("resolving custom provider base URL: %w", err)
 	}
-
-	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
-	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
-
-	switch providerCfg.ID {
-	case string(catwalk.InferenceProviderBedrock), string(catwalk.InferenceProviderBedrockEurope):
-		return c.buildBedrockProvider(apiKey, headers, providerCfg.ID)
-	case string(catwalk.InferenceProviderAzure):
-		return c.buildAzureProvider(baseURL, apiKey, headers, providerCfg.ExtraParams)
-	case string(catwalk.InferenceProviderVertexAI):
-		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
-	case string(catwalk.InferenceProviderGemini):
-		return c.buildGoogleProvider(baseURL, apiKey, headers)
-	case string(catwalk.InferenceProviderOpenRouter):
-		return c.buildOpenrouterProvider(baseURL, apiKey, headers)
-	case string(catwalk.InferenceProviderVercel):
-		return c.buildVercelProvider(baseURL, apiKey, headers)
-	case string(catwalk.InferenceProviderCopilot),
-		string(catwalk.InferenceProviderOpenCodeGo), string(catwalk.InferenceProviderOpenCodeZen):
-		// Messages models on the OpenCode gateways are served by the
-		// Anthropic Messages API at the endpoint root, without the /v1
-		// prefix the chat completions and responses endpoints use.
-		if wireType == catwalk.TypeMessages {
-			baseURL = strings.TrimSuffix(baseURL, "/v1")
-			return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
-		}
-		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent, wireType)
-	case string(catwalk.InferenceProviderOpenAI):
-		// A ChatGPT login is the provider's single credential: every
-		// request goes through the Codex backend with the OAuth token.
-		token := providerCfg.OAuthToken
-		if token != nil {
-			baseURL = openaioauth.CodexBaseURL
-			apiKey = token.AccessToken
-			headers["originator"] = "crush"
-			if token.AccountID != "" {
-				headers["chatgpt-account-id"] = token.AccountID
-			}
-		}
-		return c.buildOpenaiProvider(baseURL, apiKey, headers, token, wireType)
+	u, err := url.Parse(baseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return nil, errors.New("custom provider base URL must be an HTTP or HTTPS URL with a host")
 	}
-
-	switch wireType {
-	case catwalk.TypeMessages:
-		return c.buildAnthropicProvider(baseURL, apiKey, headers, providerCfg.ID)
-	case catwalk.TypeResponses:
-		return c.buildOpenaiProvider(baseURL, apiKey, headers, providerCfg.OAuthToken, wireType)
-	case catwalk.TypeCompletions, catwalk.Type(hyper.Name):
-		// Hyper's provider advertises its own type rather than a wire
-		// type; it speaks chat completions.
-		switch providerCfg.ID {
-		case hyper.Name:
-			baseURL = hyper.BaseURL() + "/v1"
-			headers["x-crush-id"] = event.GetID()
-		case string(catwalk.InferenceProviderZAI):
-			if providerCfg.ExtraBody == nil {
-				providerCfg.ExtraBody = map[string]any{}
-			}
-			providerCfg.ExtraBody["tool_stream"] = true
-		}
-		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent, wireType)
-	default:
-		// Known custom providers (litellm, llamacpp, lmstudio, ollama,
-		// omlx) are openai-compat under the hood.
-		if discover.IsKnownCustomProvider(string(providerCfg.Type)) {
-			return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody, providerCfg.ID, isSubAgent, wireType)
-		}
-		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
+	apiKey, err := c.cfg.Resolve(providerCfg.APIKey)
+	if err != nil {
+		return nil, fmt.Errorf("resolving custom provider API key: %w", err)
 	}
-}
-
-func isExactoSupported(modelID string) bool {
-	supportedModels := []string{
-		"moonshotai/kimi-k2-0905",
-		"deepseek/deepseek-v3.1-terminus",
-		"z-ai/glm-4.6",
-		"openai/gpt-oss-120b",
-		"qwen/qwen3-coder",
-	}
-	return slices.Contains(supportedModels, modelID)
+	return c.buildOpenaiCompatProvider(baseURL, apiKey, maps.Clone(providerCfg.ExtraHeaders), providerCfg.ExtraBody)
 }
 
 // BeginAccepted reserves an accept slot for sessionID on the active

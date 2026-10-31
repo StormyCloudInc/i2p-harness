@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"charm.land/catwalk/v3/pkg/catwalk"
 	"charm.land/lipgloss/v2/tree"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/mattn/go-isatty"
@@ -16,13 +15,13 @@ import (
 
 var modelsCmd = &cobra.Command{
 	Use:   "models",
-	Short: "List all available models from known providers",
-	Long:  `List all available models from known providers. Shows provider name and model IDs. Unconfigured providers are marked with (not configured).`,
+	Short: "List models from configured providers",
+	Long:  `List configured and discovered models from custom providers.`,
 	Example: `# List all available models
 crush models
 
 # Search models
-crush models gpt5`,
+crush models my-model`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := ResolveCwd(cmd)
@@ -41,9 +40,7 @@ crush models gpt5`,
 		term := strings.ToLower(strings.Join(args, " "))
 
 		type providerEntry struct {
-			name       string
-			models     []string
-			configured bool
+			models []string
 		}
 
 		entries := make(map[string]*providerEntry)
@@ -53,60 +50,12 @@ crush models gpt5`,
 			if provider.Disable {
 				continue
 			}
-			entry := &providerEntry{
-				name:       provider.Name,
-				configured: true,
-			}
+			entry := &providerEntry{}
 
-			// The OpenAI and xAI providers each hold exactly one
-			// credential. Signed in with ChatGPT or Grok, only the
-			// models the subscription grants are usable; an API key
-			// lists the regular catalog.
-			var models []catwalk.Model
-			switch {
-			case providerID == string(catwalk.InferenceProviderOpenAI) && provider.OAuthToken != nil:
-				models = provider.ChatGPTModels
-			case providerID == string(catwalk.InferenceProviderXAI) && provider.OAuthToken != nil:
-				models = provider.GrokModels
-			default:
-				models = provider.Models
-			}
-
-			for _, model := range models {
+			for _, model := range provider.Models {
 				if term != "" {
 					matched := false
 					for _, s := range []string{provider.ID, provider.Name, model.ID, model.Name} {
-						if strings.Contains(strings.ToLower(s), term) {
-							matched = true
-							break
-						}
-					}
-					if !matched {
-						continue
-					}
-				}
-				entry.models = append(entry.models, model.ID)
-			}
-			if len(entry.models) > 0 {
-				slices.Sort(entry.models)
-				entries[providerID] = entry
-			}
-		}
-
-		// Add known but unconfigured providers from catwalk.
-		for _, kp := range cfg.KnownProviders() {
-			providerID := string(kp.ID)
-			if _, exists := entries[providerID]; exists {
-				continue
-			}
-			entry := &providerEntry{
-				name:       kp.Name,
-				configured: false,
-			}
-			for _, model := range kp.Models {
-				if term != "" {
-					matched := false
-					for _, s := range []string{providerID, kp.Name, model.ID, model.Name} {
 						if strings.Contains(strings.ToLower(s), term) {
 							matched = true
 							break
@@ -150,11 +99,7 @@ crush models gpt5`,
 		t := tree.New()
 		for _, providerID := range providerIDs {
 			entry := entries[providerID]
-			label := providerID
-			if !entry.configured {
-				label += " (not configured)"
-			}
-			providerNode := tree.Root(label)
+			providerNode := tree.Root(providerID)
 			for _, modelID := range entry.models {
 				providerNode.Child(modelID)
 			}

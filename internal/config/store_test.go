@@ -331,48 +331,16 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 	resetProviderState()
 	t.Cleanup(resetProviderState)
 
-	// Create initial config with one model preference
-	initialConfig := `{
-		"models": {
-			"large": {"provider": "openai", "model": "gpt-4"}
-		},
-		"providers": {
-			"openai": {
-				"api_key": "test-key",
-				"models": [{"id": "gpt-4", "name": "GPT-4"}]
-			}
-		}
-	}`
+	// Create initial config with one model preference.
+	initialConfig := twoModelConfig("gpt-4")
 	require.NoError(t, os.WriteFile(configPath, []byte(initialConfig), 0o600))
-
-	// Load initial config properly
 	store, err := Load(t.Context(), dir, dir, false)
 	require.NoError(t, err)
-
-	// Set globalDataPath for the test (Load doesn't set this directly)
 	store.globalDataPath = configPath
 	store.CaptureStalenessSnapshot([]string{configPath})
-
-	// Verify initial model
-	require.Equal(t, "openai", store.config.Models[SelectedModelTypeLarge].Provider)
+	require.Equal(t, "custom", store.config.Models[SelectedModelTypeLarge].Provider)
 	require.Equal(t, "gpt-4", store.config.Models[SelectedModelTypeLarge].Model)
-
-	// Modify config on disk to change model
-	updatedConfig := `{
-		"models": {
-			"large": {"provider": "anthropic", "model": "claude-3"}
-		},
-		"providers": {
-			"openai": {
-				"api_key": "test-key",
-				"models": [{"id": "gpt-4", "name": "GPT-4"}]
-			},
-			"anthropic": {
-				"api_key": "test-key-2",
-				"models": [{"id": "claude-3", "name": "Claude 3"}]
-			}
-		}
-	}`
+	updatedConfig := twoModelConfig("claude-3")
 	time.Sleep(10 * time.Millisecond)
 	require.NoError(t, os.WriteFile(configPath, []byte(updatedConfig), 0o600))
 
@@ -382,7 +350,7 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the NEW config values are now in effect (regression check)
-	require.Equal(t, "anthropic", store.config.Models[SelectedModelTypeLarge].Provider)
+	require.Equal(t, "custom", store.config.Models[SelectedModelTypeLarge].Provider)
 	require.Equal(t, "claude-3", store.config.Models[SelectedModelTypeLarge].Model)
 }
 
@@ -488,20 +456,8 @@ func TestAutoReloadDisabledDuringReload(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "crush.json")
 
-	// Create initial config with a provider that will trigger config modification during reload
-	// (simulating the anthropic OAuth token removal case)
-	initialConfig := `{
-		"providers": {
-			"anthropic": {
-				"api_key": "test-key",
-				"oauth": {"access_token": "token", "refresh_token": "refresh"}
-			}
-		}
-	}`
-	require.NoError(t, os.WriteFile(configPath, []byte(initialConfig), 0o600))
-
-	// Load will trigger configureProviders which removes anthropic OAuth config.
-	// This should NOT cause infinite recursion — writeMu prevents re-entrant reloads.
+	// Load a configured custom provider before testing reload behavior.
+	require.NoError(t, os.WriteFile(configPath, []byte(twoModelConfig("gpt-4")), 0o600))
 	store, err := Load(t.Context(), dir, dir, false)
 	require.NoError(t, err)
 

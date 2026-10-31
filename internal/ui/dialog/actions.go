@@ -45,6 +45,14 @@ type ActionSelectModel struct {
 	ReAuthenticate bool
 }
 
+// ActionAddProvider requests the creation of a custom provider.
+type ActionAddProvider struct {
+	ID      string
+	BaseURL string
+	APIKey  string
+	Model   string
+}
+
 // Messages for commands
 type (
 	ActionNewSession              struct{}

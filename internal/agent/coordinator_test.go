@@ -619,9 +619,8 @@ func TestGetProviderOptionsReasoningEffortFallback(t *testing.T) {
 	require.NotNil(t, parsed.ReasoningEffort)
 	assert.Equal(t, "high", string(*parsed.ReasoningEffort))
 
-	thinking, ok := parsed.ExtraBody["thinking"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "enabled", thinking["type"])
+	_, ok = parsed.ExtraBody["thinking"]
+	assert.False(t, ok, "a custom provider ID must not inject provider-specific options")
 }
 
 func TestGetProviderOptionsTopKExtraBody(t *testing.T) {

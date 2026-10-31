@@ -211,10 +211,15 @@ func ThemeStylesFromConfig(cfg *config.Config) styles.Styles {
 	return LoadThemeStyles(ThemeNameFromConfig(cfg))
 }
 
-// IsHyper reports whether the currently selected large model is provided
-// by Hyper.
+// IsHyper reports whether the current model uses the retired Hyper integration.
 func (c *Common) IsHyper() bool {
-	return largeModelProviderID(c.Workspace) == "hyper"
+	return false
+}
+
+// LiteralProviderValue preserves UI-entered endpoint and key values when the
+// configuration resolver expands shell syntax.
+func LiteralProviderValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `$`, `\$`, "`", "\\`").Replace(value)
 }
 
 // CenterRect returns a new [Rectangle] centered within the given area with the

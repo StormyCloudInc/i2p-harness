@@ -120,7 +120,7 @@ func TestLoad_TracksNotYetCreatedGlobalCrushrc(t *testing.T) {
 	// "not configured" return and reaches the staleness snapshot capture.
 	require.NoError(t, os.WriteFile(
 		filepath.Join(workDir, "crushrc"),
-		[]byte("provider add openai --api-key k\n"), 0o644,
+		[]byte("provider add custom --base-url http://localhost:1/v1\nmodel add custom/example --name Example\n"), 0o644,
 	))
 
 	// Load with no global crushrc present.

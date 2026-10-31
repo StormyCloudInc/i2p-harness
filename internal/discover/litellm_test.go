@@ -1,7 +1,6 @@
 package discover
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -55,7 +54,7 @@ func TestLitellmEnricher(t *testing.T) {
 		}
 
 		e := &litellmEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 3)
 
@@ -98,7 +97,7 @@ func TestLitellmEnricher(t *testing.T) {
 		}
 
 		e := &litellmEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 
 		// User overrides should be preserved.
@@ -121,7 +120,7 @@ func TestLitellmEnricher(t *testing.T) {
 		models := []catwalk.Model{{ID: "m1"}}
 
 		e := &litellmEnricher{}
-		result, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, models)
+		result, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, models)
 		require.NoError(t, err)
 		require.Len(t, result, 1)
 		require.Equal(t, "m1", result[0].ID)
@@ -147,7 +146,7 @@ func TestLitellmEnricher(t *testing.T) {
 		}
 
 		e := &litellmEnricher{}
-		_, err := e.EnrichModels(context.Background(), cfg, &mockResolver{}, nil)
+		_, err := e.EnrichModels(localHTTPContext(t), cfg, &mockResolver{}, nil)
 		require.NoError(t, err)
 	})
 }

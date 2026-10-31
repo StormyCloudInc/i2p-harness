@@ -1,10 +1,8 @@
 package config
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -1150,102 +1148,44 @@ func (c *Config) SetupAgents() {
 }
 
 func (c *ProviderConfig) TestConnection(resolver VariableResolver) error {
-	var (
-		providerID = catwalk.InferenceProvider(c.ID)
-		testURL    = ""
-		headers    = make(map[string]string)
-		apiKey, _  = resolver.ResolveValue(c.APIKey)
-	)
-
-	switch providerID {
-	case catwalk.InferenceProviderMiniMax, catwalk.InferenceProviderMiniMaxChina:
-		// NOTE: MiniMax has no good endpoint we can use to validate the API key.
-		return nil
-	case catwalk.InferenceProviderAlibabaSingapore:
-		// NOTE: Alibaba has no good endpoint we can use to validate the API key.
-		// Let's at least check the pattern.
-		if !strings.HasPrefix(apiKey, "sk-") {
-			return fmt.Errorf("invalid API key format for provider %s", c.ID)
-		}
-		return nil
-	case catwalk.InferenceProviderBedrock, catwalk.InferenceProviderBedrockEurope:
-		// NOTE: Bedrock has a `/foundation-models` endpoint that we could in
-		// theory use, but apparently the authorization is region-specific,
-		// so it's not so trivial.
-		if strings.HasPrefix(apiKey, "ABSK") { // Bedrock API keys
-			return nil
-		}
-		return errors.New("not a valid bedrock api key")
-	case catwalk.InferenceProviderVercel:
-		// NOTE: Vercel does not validate API keys on the `/models` endpoint.
-		if strings.HasPrefix(apiKey, "vck_") { // Vercel API keys
-			return nil
-		}
-		return errors.New("not a valid vercel api key")
-	case catwalk.InferenceProviderGemini:
-		baseURL, _ := resolver.ResolveValue(c.BaseURL)
-		baseURL = cmp.Or(baseURL, "https://generativelanguage.googleapis.com")
-		testURL = baseURL + "/v1beta/models?key=" + url.QueryEscape(apiKey)
+	baseURL, err := resolver.ResolveValue(c.BaseURL)
+	if err != nil {
+		return fmt.Errorf("resolving provider %s base URL: %w", c.ID, err)
 	}
-
-	if testURL == "" {
-		// The models API endpoint is determined by the provider type, which
-		// describes the API format the provider speaks.
-		switch c.Type {
-		case catwalk.TypeMessages:
-			baseURL, _ := resolver.ResolveValue(c.BaseURL)
-			baseURL = cmp.Or(baseURL, "https://api.anthropic.com")
-
-			testURL = baseURL + "/v1/models"
-
-			headers["x-api-key"] = apiKey
-			headers["anthropic-version"] = "2023-06-01"
-		default:
-			// Completions, responses, and custom provider types all expose
-			// an OpenAI-style /models endpoint.
-			baseURL, _ := resolver.ResolveValue(c.BaseURL)
-			baseURL = cmp.Or(baseURL, "https://api.openai.com/v1")
-
-			if providerID == catwalk.InferenceProviderOpenRouter {
-				testURL = baseURL + "/credits"
-			} else {
-				testURL = baseURL + "/models"
-			}
-
-			headers["Authorization"] = "Bearer " + apiKey
-		}
+	u, err := url.Parse(baseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return fmt.Errorf("provider %s base URL must be an HTTP or HTTPS URL with a host", c.ID)
+	}
+	apiKey, err := resolver.ResolveValue(c.APIKey)
+	if err != nil {
+		return fmt.Errorf("resolving provider %s API key: %w", c.ID, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	client := &http.Client{}
-	req, err := http.NewRequestWithContext(ctx, "GET", testURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	for k, v := range c.ExtraHeaders {
-		req.Header.Set(k, v)
+	for key, value := range c.ExtraHeaders {
+		resolved, err := resolver.ResolveValue(value)
+		if err != nil {
+			return fmt.Errorf("resolving provider %s header %q: %w", c.ID, key, err)
+		}
+		if resolved != "" {
+			req.Header.Set(key, resolved)
+		}
 	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to create request for provider %s: %w", c.ID, err)
+		return fmt.Errorf("failed to connect to provider %s: %w", c.ID, err)
 	}
 	defer resp.Body.Close()
-
-	switch providerID {
-	case catwalk.InferenceProviderZAI:
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
-		}
-	default:
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
-		}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to connect to provider %s: %s", c.ID, resp.Status)
 	}
 	return nil
 }
